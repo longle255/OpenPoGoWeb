@@ -1,107 +1,11 @@
 'use strict';
 
-var socket_io;
+var socket_io = {};
 var pokemonActions;
 
-$(document).ready(function () {
+
+$(document).ready(function() {
     mapView.init();
-    socket_io = io.connect('http://' + document.domain + ':8000');
-
-    var onevent = socket_io.onevent;
-    socket_io.onevent = function (packet) {
-        var args = packet.data || [];
-        onevent.call(this, packet);    // original call
-        packet.data = ["*"].concat(args);
-        onevent.call(this, packet);      // additional call to catch-all
-    };
-
-    socket_io.on("*", function (event, data) {
-        // console.log(event, data);
-        var str = event.split(':');
-        if (str[0]==='bot' && str[1]==='process_request') return;
-        var userId = str[str.length - 1];
-        if (mapView.user_data[userId]) {
-            mapView.user_data[userId].logs = mapView.user_data[userId].logs || [];
-            mapView.user_data[userId].logs.push({
-                event: str[0],
-                message: data.msg
-            });
-        }
-        switch (str[0]) {
-            case 'discard_item':
-                if (data.result) {
-                    swal("Success!", "discard success");
-                    mapView.addInventory();
-                    $("#submenu").hide();
-                }
-                break
-            case 'transfer_pokemon':
-                if (data.result) {
-                    swal("Deleted!", "Pokemon transfered.", "success");
-                    mapView.addInventory();
-                    $("#submenu").hide();
-                }
-            default:
-                break;
-        }
-
-        if ($('#logs-' + userId).is(":visible")) {
-            var html = '<div class="log-item"> <span class="log-date">' + str[0] + '&nbsp;&nbsp;&nbsp;</span><span class="undefined">' + data.msg + '</span></div>';
-            $('#logs-' + userId + ' .col.s12').append(html)
-            $("#logs-" + userId).scrollTop($("#logs-" + userId)[0].scrollHeight);
-        }
-    });
-
-    socket_io.on('connect', function () {
-        console.log('connected!');
-    });
-
-    pokemonActions = function (socket_io) {
-        var actions = {
-            releasePokemon: {
-                button: function (pokemon, user_id) {
-                    return '<a href="#!" onClick="pokemonActions.releasePokemon.action(\'' + pokemon.unique_id + '\')">Release</a>';
-                },
-                action: function (id) {
-                    if (confirm("Are you sure you want to release this pokemon? THIS CANNOT BE UNDONE!")) {
-                        socket_io.emit('user_action', { 'event': 'release_pokemon', data: { 'pokemon_id': id } });
-                        mapView.sortAndShowBagPokemon(false, false);
-                    }
-                }
-            },
-
-            evolvePokemon: {
-                button: function (pokemon, user_id) {
-                    var pkmnData = mapView.pokemonArray[pokemon.id - 1],
-                        candy = mapView.getCandy(pokemon.id, user_id),
-                        canEvolve = false;
-                    if ("undefined" != typeof pkmnData['Next evolution(s)'] && "undefined" != typeof pkmnData['Next Evolution Requirements']) {
-                        canEvolve = (candy >= pkmnData['Next Evolution Requirements']['Amount'])
-                    }
-                    return (canEvolve ? '<a href="#!" onClick="pokemonActions.evolvePokemon.action(\'' + pokemon.unique_id + '\')">Evolve</a>' : false);
-                },
-                action: function (id) {
-                    if (confirm("Are you sure you want to evolve this pokemon? THIS CANNOT BE UNDONE!")) {
-                        socket_io.emit('user_action', { 'event': 'evolve_pokemon', data: { 'pokemon_id': id } });
-                        mapView.sortAndShowBagPokemon(false, false);
-                    }
-                }
-            }
-        }
-
-        var enabledActions = {};
-        for (var i in actions) {
-            if (mapView.settings.actionsEnabled === true) {
-                enabledActions[i] = actions[i];
-            } else if (Array.isArray(mapView.settings.actionsEnabled)) {
-                if (mapView.settings.actionsEnabled.indexOf(i) !== -1) {
-                    enabledActions[i] = actions[i];
-                }
-            }
-        }
-
-        return enabledActions;
-    } (socket_io)
 });
 
 var mapView = {
@@ -197,38 +101,101 @@ var mapView = {
         '1002': 'Item Storage Upgrade'
     },
     settings: {},
-    init: function () {
+    init: function() {
         var self = this;
         self.settings = $.extend(true, self.settings, userInfo);
         self.bindUi();
 
-        $.getScript('https://maps.googleapis.com/maps/api/js?key={0}&libraries=drawing'.format(self.settings.gMapsAPIKey), function () {
+        $.getScript('https://maps.googleapis.com/maps/api/js?key={0}&libraries=drawing'.format(self.settings.gMapsAPIKey), function() {
             self.log({
                 message: 'Loading Data..'
             });
-            self.loadJSON('data/pokemondata.json', function (data, successData) {
+            self.loadJSON('data/pokemondata.json', function(data, successData) {
                 self.pokemonArray = data;
             }, self.errorFunc, 'pokemonData');
-            self.loadJSON('data/pokemoncandy.json', function (data, successData) {
+            self.loadJSON('data/pokemoncandy.json', function(data, successData) {
                 self.pokemoncandyArray = data;
             }, self.errorFunc, 'pokemonCandy');
-            self.loadJSON('data/levelXp.json', function (data, successData) {
+            self.loadJSON('data/levelXp.json', function(data, successData) {
                 self.levelXpArray = data;
             }, self.errorFunc, 'levelXp');
             for (var i = 0; i < self.settings.users.length; i++) {
-                var user = self.settings.users[i];
+                var user = self.settings.users[i].username;
                 self.user_data[user] = {
-                    logs: []
+                    logs: [],
+                    port: self.settings.users[i].port
                 };
+                self.settings.users[i] = self.settings.users[i].username;
                 self.pathcoords[user] = [];
+                self.initSocket()
             }
+
             setTimeout(self.initMap.bind(self), 2000);
             self.log({
                 message: 'Data Loaded!'
             });
         });
     },
-    setBotPathOptions: function (checked) {
+
+    initSocket: function() {
+        var self = this;
+        for (var i = 0; i < self.settings.users.length; i++) {
+            var username = self.settings.users[i];
+            var userSocket = io.connect('http://' + document.domain + ':'+self.user_data[username].port);
+
+            var onevent = userSocket.onevent;
+            userSocket.onevent = function(packet) {
+                var args = packet.data || [];
+                onevent.call(this, packet); // original call
+                packet.data = ["*"].concat(args);
+                onevent.call(this, packet); // additional call to catch-all
+            };
+
+            userSocket.on("*", function(event, data) {
+                // console.log(event, data);
+                var str = event.split(':');
+                if (str[0] === 'bot' && str[1] === 'process_request') return;
+                var userId = str[str.length - 1];
+                if (mapView.user_data[userId]) {
+                    mapView.user_data[userId].logs = mapView.user_data[userId].logs || [];
+                    mapView.user_data[userId].logs.push({
+                        event: str[0],
+                        message: data.msg
+                    });
+                }
+                switch (str[0]) {
+                    case 'discard_item':
+                        if (data.result) {
+                            swal("Success!", "discard success");
+                            mapView.addInventory();
+                            $("#submenu").hide();
+                        }
+                        break
+                    case 'transfer_pokemon':
+                        if (data.result) {
+                            swal("Deleted!", "Pokemon transfered.", "success");
+                            mapView.addInventory();
+                            $("#submenu").hide();
+                        }
+                    default:
+                        break;
+                }
+
+                if ($('#logs-' + userId).is(":visible")) {
+                    var html = '<div class="log-item"> <span class="log-date">' + str[0] + '&nbsp;&nbsp;&nbsp;</span><span class="undefined">' + data.msg + '</span></div>';
+                    $('#logs-' + userId + ' .col.s12').append(html)
+                    $("#logs-" + userId).scrollTop($("#logs-" + userId)[0].scrollHeight);
+                }
+            });
+
+            userSocket.on('connect', function() {
+                console.log('connected!');
+            });
+            socket_io[username] = userSocket;
+        }
+
+    },
+    setBotPathOptions: function(checked) {
         var self = this;
         for (var i = 0; i < self.settings.users.length; i++) {
             if (self.user_data[self.settings.users[i]] && self.user_data[self.settings.users[i]].trainerPath)
@@ -237,13 +204,13 @@ var mapView = {
                 });
         }
     },
-    bindUi: function () {
+    bindUi: function() {
         var self = this;
         $('#switchPan').prop('checked', self.settings.userFollow);
         $('#switchZoom').prop('checked', self.settings.userZoom);
         $('#strokeOn').prop('checked', self.settings.botPath);
 
-        $('#switchPan').change(function () {
+        $('#switchPan').change(function() {
             if (this.checked) {
                 self.settings.userFollow = true;
             } else {
@@ -251,7 +218,7 @@ var mapView = {
             }
         });
 
-        $('#switchZoom').change(function () {
+        $('#switchZoom').change(function() {
             if (this.checked) {
                 self.settings.userZoom = true;
             } else {
@@ -259,20 +226,20 @@ var mapView = {
             }
         });
 
-        $('#strokeOn').change(function () {
+        $('#strokeOn').change(function() {
             self.settings.botPath = this.checked;
             self.setBotPathOptions(this.checked);
         });
 
-        $('#optionsButton').click(function () {
+        $('#optionsButton').click(function() {
             $('#optionsList').toggle();
         });
 
-        $('#logs-button').click(function () {
+        $('#logs-button').click(function() {
             $('#logs-panel').toggle();
         });
         // Init tooltip
-        $(document).ready(function () {
+        $(document).ready(function() {
             $('.tooltipped').tooltip({
                 delay: 50
             });
@@ -281,7 +248,7 @@ var mapView = {
         // Bots list and menus
         var submenuIndex = 0,
             currentUserId;
-        $('body').on('click', ".bot-user .bot-items .btn:not(.tFind)", function () {
+        $('body').on('click', ".bot-user .bot-items .btn:not(.tFind)", function() {
             var itemIndex = $(this).parent().parent().find('.btn').index($(this)) + 1,
                 userId = $(this).closest('ul').data('user-id');
             if ($('#submenu').is(':visible') && itemIndex == submenuIndex && currentUserId == userId) {
@@ -293,26 +260,26 @@ var mapView = {
             }
         });
 
-        $('body').on('click', '#close', function () {
+        $('body').on('click', '#close', function() {
             $('#submenu').toggle();
         });
 
-        $('body').on('click', '.tFind', function () {
+        $('body').on('click', '.tFind', function() {
             self.findBot($(this).closest('ul').data('user-id'));
         });
 
         // Binding sorts
-        $('body').on('click', '.pokemon-sort a', function () {
+        $('body').on('click', '.pokemon-sort a', function() {
             var item = $(this);
             self.sortAndShowBagPokemon(item.data('sort'), item.parent().parent().data('user-id'));
         });
-        $('body').on('click', '.pokedex-sort a', function () {
+        $('body').on('click', '.pokedex-sort a', function() {
             var item = $(this);
             self.sortAndShowPokedex(item.data('sort'), item.parent().parent().data('user-id'));
         });
 
     },
-    initMap: function () {
+    initMap: function() {
         var self = this;
         self.map = new google.maps.Map(document.getElementById('map'), {
             center: {
@@ -321,13 +288,51 @@ var mapView = {
             },
             zoom: 8,
             mapTypeId: 'roadmap',
-            styles: [
-                { "featureType": "road", "elementType": "geometry.fill", "stylers": [{ "color": "#4f9f92" }, { "visibility": "on" }] },
-                { "featureType": "water", "elementType": "geometry.stroke", "stylers": [{ "color": "#feff95" }, { "visibility": "on" }, { "weight": 1.2 }] },
-                { "featureType": "landscape", "elementType": "geometry", "stylers": [{ "color": "#adff9d" }, { "visibility": "on" }] },
-                { "featureType": "water", "stylers": [{ "visibility": "on" }, { "color": "#147dd9" }] },
-                { "featureType": "poi", "elementType": "geometry.fill", "stylers": [{ "color": "#d3ffcc" }] }, { "elementType": "labels", "stylers": [{ "visibility": "off" }] }
-            ]
+            styles: [{
+                "featureType": "road",
+                "elementType": "geometry.fill",
+                "stylers": [{
+                    "color": "#4f9f92"
+                }, {
+                    "visibility": "on"
+                }]
+            }, {
+                "featureType": "water",
+                "elementType": "geometry.stroke",
+                "stylers": [{
+                    "color": "#feff95"
+                }, {
+                    "visibility": "on"
+                }, {
+                    "weight": 1.2
+                }]
+            }, {
+                "featureType": "landscape",
+                "elementType": "geometry",
+                "stylers": [{
+                    "color": "#adff9d"
+                }, {
+                    "visibility": "on"
+                }]
+            }, {
+                "featureType": "water",
+                "stylers": [{
+                    "visibility": "on"
+                }, {
+                    "color": "#147dd9"
+                }]
+            }, {
+                "featureType": "poi",
+                "elementType": "geometry.fill",
+                "stylers": [{
+                    "color": "#d3ffcc"
+                }]
+            }, {
+                "elementType": "labels",
+                "stylers": [{
+                    "visibility": "off"
+                }]
+            }]
         });
         self.placeTrainer();
         self.addCatchable();
@@ -335,23 +340,23 @@ var mapView = {
         setInterval(self.addCatchable, 1000);
         setInterval(self.addInventory, 5000);
     },
-    addCatchable: function () {
+    addCatchable: function() {
         var self = mapView;
         for (var i = 0; i < self.settings.users.length; i++) {
             self.loadJSON('catchable-' + self.settings.users[i] + '.json', self.catchSuccess, self.errorFunc, i);
         }
     },
-    addInventory: function () {
+    addInventory: function() {
         var self = mapView;
         for (var i = 0; i < self.settings.users.length; i++) {
             self.loadJSON('inventory-' + self.settings.users[i] + '.json', self.invSuccess, self.errorFunc, i);
         }
     },
-    buildMenu: function (user_id, menu) {
+    buildMenu: function(user_id, menu) {
         var self = this,
             out = '';
         $("#submenu").show();
-        $(document).on('click', '.btn-discard-item', function () {
+        $(document).on('click', '.btn-discard-item', function() {
             var itemId = $(this).data('itemid');
             var account = $(this).data('account');
 
@@ -362,17 +367,24 @@ var mapView = {
                 showCancelButton: true,
                 closeOnConfirm: false,
                 inputPlaceholder: "1",
-            }, function (inputValue) {
+            }, function(inputValue) {
                 if (inputValue === false) return false;
                 if (inputValue === "") {
                     swal.showInputError("You need to write something!");
                     return false;
                 }
                 var count = parseInt(inputValue);
-                if (count) socket_io.emit('remote:send_request', { account: account, name: 'discard_item', args: { item_id: itemId, count: count } })
+                if (count) socket_io[account].emit('remote:send_request', {
+                    account: account,
+                    name: 'discard_item',
+                    args: {
+                        item_id: itemId,
+                        count: count
+                    }
+                })
             });
         });
-        $(document).on('click', '.btn-transfer-pokemon', function () {
+        $(document).on('click', '.btn-transfer-pokemon', function() {
             var pokemonId = $(this).data('pokemonid');
             var pkmnName = $(this).data('pkmnname');
             var pkmnCP = $(this).data('pkmncp');
@@ -388,8 +400,8 @@ var mapView = {
                 showCancelButton: true,
                 confirmButtonText: "Yes, transfer it!",
                 closeOnConfirm: false
-            }, function () {
-                socket_io.emit('remote:send_request', {
+            }, function() {
+                socket_io[account].emit('remote:send_request', {
                     account: account,
                     name: 'transfer_pokemon',
                     args: {
@@ -469,7 +481,7 @@ var mapView = {
                 $('#subtitle').html(total + " item" + (total !== 1 ? "s" : "") + " in Bag");
                 out += '</div></div>';
                 var nth = 0;
-                out = out.replace(/<\/div><div/g, function (match, i, original) {
+                out = out.replace(/<\/div><div/g, function(match, i, original) {
                     nth++;
                     return (nth % 4 === 0) ? '</div></div><div class="row"><div' : match;
                 });
@@ -522,7 +534,7 @@ var mapView = {
                 break;
         }
     },
-    buildTrainerList: function () {
+    buildTrainerList: function() {
         var self = this,
             users = self.settings.users;
         var out = '<div class="col s12"><ul id="bots-list" class="collapsible" data-collapsible="accordion"> \
@@ -546,7 +558,7 @@ var mapView = {
         out += "</ul></div>";
         $('#trainers').html(out);
         var bots_collapsed = 1;
-        $(document).on('click', '.bots_head', function () {
+        $(document).on('click', '.bots_head', function() {
             var crt_display = 'block';
             if (bots_collapsed == 0) {
                 bots_collapsed = 1;
@@ -554,7 +566,7 @@ var mapView = {
                 crt_display = 'none';
                 bots_collapsed = 0;
             }
-            $(this).parent().find('li').each(function () {
+            $(this).parent().find('li').each(function() {
                 if (!$(this).hasClass('bots_head')) {
                     $(this).css('display', crt_display);
                 }
@@ -562,7 +574,7 @@ var mapView = {
         });
         $('.collapsible').collapsible();
     },
-    catchSuccess: function (data, user_index) {
+    catchSuccess: function(data, user_index) {
         var self = mapView,
             user = self.user_data[self.settings.users[user_index]],
             poke_name = '';
@@ -623,10 +635,10 @@ var mapView = {
             }
         }
     },
-    errorFunc: function (xhr) {
+    errorFunc: function(xhr) {
         console.error(xhr);
     },
-    filter: function (arr, search) {
+    filter: function(arr, search) {
         var filtered = [];
         for (var i = 0; i < arr.length; i++) {
             if (arr[i].inventory_item_data[search] != undefined) {
@@ -635,7 +647,7 @@ var mapView = {
         }
         return filtered;
     },
-    findBot: function (user_index) {
+    findBot: function(user_index) {
         var self = this,
             coords = self.pathcoords[self.settings.users[user_index]][self.pathcoords[self.settings.users[user_index]].length - 1];
 
@@ -645,7 +657,7 @@ var mapView = {
             lng: parseFloat(coords.lng)
         });
     },
-    getCandy: function (p_num, user_id) {
+    getCandy: function(p_num, user_id) {
         var self = this,
             user = self.user_data[self.settings.users[user_id]];
 
@@ -656,7 +668,7 @@ var mapView = {
             }
         }
     },
-    invSuccess: function (data, user_index) {
+    invSuccess: function(data, user_index) {
         var self = mapView,
             userData = self.user_data[self.settings.users[user_index]],
             bagCandy = self.filter(data, 'candy'),
@@ -672,21 +684,21 @@ var mapView = {
         userData.eggs = self.filter(data, 'egg_incubators');
         self.user_data[self.settings.users[user_index]] = userData;
     },
-    pad_with_zeroes: function (number, length) {
+    pad_with_zeroes: function(number, length) {
         var my_string = '' + number;
         while (my_string.length < length) {
             my_string = '0' + my_string;
         }
         return my_string;
     },
-    placeTrainer: function () {
+    placeTrainer: function() {
         var self = mapView;
 
         for (var i = 0; i < self.settings.users.length; i++) {
             self.loadJSON('location-' + self.settings.users[i] + '.json', self.trainerFunc, self.errorFunc, i);
         }
     },
-    sortAndShowBagPokemon: function (sortOn, user_id) {
+    sortAndShowBagPokemon: function(sortOn, user_id) {
         var self = this,
             eggs = 0,
             sortedPokemon = [],
@@ -731,12 +743,12 @@ var mapView = {
                 "creation_time": pkmTime,
                 'candy': self.getCandy(pkmID, user_id),
                 "height": pkmHeight,
-                "weight": pkmWeight 
+                "weight": pkmWeight
             });
         }
         switch (sortOn) {
             case 'name':
-                sortedPokemon.sort(function (a, b) {
+                sortedPokemon.sort(function(a, b) {
                     if (a.name < b.name) return -1;
                     if (a.name > b.name) return 1;
                     if (a.cp > b.cp) return -1;
@@ -745,7 +757,7 @@ var mapView = {
                 });
                 break;
             case 'id':
-                sortedPokemon.sort(function (a, b) {
+                sortedPokemon.sort(function(a, b) {
                     if (a.id < b.id) return -1;
                     if (a.id > b.id) return 1;
                     if (a.cp > b.cp) return -1;
@@ -754,35 +766,35 @@ var mapView = {
                 });
                 break;
             case 'cp':
-                sortedPokemon.sort(function (a, b) {
+                sortedPokemon.sort(function(a, b) {
                     if (a.cp > b.cp) return -1;
                     if (a.cp < b.cp) return 1;
                     return 0;
                 });
                 break;
             case 'iv':
-                sortedPokemon.sort(function (a, b) {
+                sortedPokemon.sort(function(a, b) {
                     if (a.iv > b.iv) return -1;
                     if (a.iv < b.iv) return 1;
                     return 0;
                 });
                 break;
             case 'time':
-                sortedPokemon.sort(function (a, b) {
+                sortedPokemon.sort(function(a, b) {
                     if (a.creation_time > b.creation_time) return -1;
                     if (a.creation_time < b.creation_time) return 1;
                     return 0;
                 });
                 break;
             case 'candy':
-                sortedPokemon.sort(function (a, b) {
+                sortedPokemon.sort(function(a, b) {
                     if (a.candy > b.candy) return -1;
                     if (a.candy < b.candy) return 1;
                     return 0;
                 });
                 break;
             default:
-                sortedPokemon.sort(function (a, b) {
+                sortedPokemon.sort(function(a, b) {
                     if (a.cp > b.cp) return -1;
                     if (a.cp < b.cp) return 1;
                     return 0;
@@ -817,8 +829,7 @@ var mapView = {
                 '<br><b>Candy: </b>' + candyNum +
                 '</b><button class="chip btn-transfer-pokemon" data-pokemonId="' + pkmnUnique + '" data-pkmnName="' + pkmnName + '" data-pkmnCP="' + pkmnCP + '"' +
                 'data-pkmnIV="' + pkmnIV + '"+ data-account="' + self.settings.users[user_id] + '" data-height="' + pkmnHeight + '" data-weight="' + pkmnWeight + '" data-creation_time_ms="' +
-                pkmnCreateTime + '">transfer</button> '
-                ;
+                pkmnCreateTime + '">transfer</button> ';
 
             if (Object.keys(pokemonActions).length) {
                 var actionsOut = ''
@@ -870,14 +881,14 @@ var mapView = {
         }
         out += '</div></div>';
         var nth = 0;
-        out = out.replace(/<\/div><div/g, function (match, i, original) {
+        out = out.replace(/<\/div><div/g, function(match, i, original) {
             nth++;
             return (nth % 4 === 0) ? '</div></div><div class="row"><div' : match;
         });
         $('#subcontent').html(out);
         $('.dropdown-button').dropdown();
     },
-    sortAndShowPokedex: function (sortOn, user_id) {
+    sortAndShowPokedex: function(sortOn, user_id) {
         var self = this,
             out = '',
             sortedPokedex = [],
@@ -903,29 +914,29 @@ var mapView = {
         }
         switch (sortOn) {
             case 'id':
-                sortedPokedex.sort(function (a, b) {
+                sortedPokedex.sort(function(a, b) {
                     return a.id - b.id;
                 });
                 break;
             case 'name':
-                sortedPokedex.sort(function (a, b) {
+                sortedPokedex.sort(function(a, b) {
                     if (a.name < b.name) return -1;
                     if (a.name > b.name) return 1;
                     return 0;
                 });
                 break;
             case 'enc':
-                sortedPokedex.sort(function (a, b) {
+                sortedPokedex.sort(function(a, b) {
                     return a.enc - b.enc;
                 });
                 break;
             case 'cap':
-                sortedPokedex.sort(function (a, b) {
+                sortedPokedex.sort(function(a, b) {
                     return a.cap - b.cap;
                 });
                 break;
             default:
-                sortedPokedex.sort(function (a, b) {
+                sortedPokedex.sort(function(a, b) {
                     return a.id - b.id;
                 });
                 break;
@@ -954,13 +965,13 @@ var mapView = {
         }
         out += '</div></div>';
         var nth = 0;
-        out = out.replace(/<\/div><div/g, function (match, i, original) {
+        out = out.replace(/<\/div><div/g, function(match, i, original) {
             nth++;
             return (nth % 4 === 0) ? '</div></div><div class="row"><div' : match;
         });
         $('#subcontent').html(out);
     },
-    trainerFunc: function (data, user_index) {
+    trainerFunc: function(data, user_index) {
         var self = mapView,
             coords = self.pathcoords[self.settings.users[user_index]][self.pathcoords[self.settings.users[user_index]].length - 1];
         for (var i = 0; i < data.cells.length; i++) {
@@ -1002,8 +1013,8 @@ var mapView = {
                         self.info_windows[fort.id] = new google.maps.InfoWindow({
                             content: contentString
                         });
-                        google.maps.event.addListener(self.forts[fort.id], 'click', (function (marker, content, infowindow) {
-                            return function () {
+                        google.maps.event.addListener(self.forts[fort.id], 'click', (function(marker, content, infowindow) {
+                            return function() {
                                 infowindow.setContent(content);
                                 infowindow.open(map, marker);
                             };
@@ -1077,15 +1088,15 @@ var mapView = {
             });
         }
     },
-    updateTrainer: function () {
+    updateTrainer: function() {
         var self = mapView;
         for (var i = 0; i < self.settings.users.length; i++) {
             self.loadJSON('location-' + self.settings.users[i] + '.json', self.trainerFunc, self.errorFunc, i);
         }
     },
-    loadJSON: function (path, success, error, successData) {
+    loadJSON: function(path, success, error, successData) {
         var xhr = new XMLHttpRequest();
-        xhr.onreadystatechange = function () {
+        xhr.onreadystatechange = function() {
             if (xhr.readyState === XMLHttpRequest.DONE) {
                 if (xhr.status === 200) {
                     if (success)
@@ -1116,7 +1127,7 @@ var mapView = {
     */
 
     // Adds events to log panel and if it's closed sends Toast
-    log: function (log_object) {
+    log: function(log_object) {
         var currentDate = new Date();
         var time = ('0' + currentDate.getHours()).slice(-2) + ':' + ('0' + (currentDate.getMinutes())).slice(-2);
         $("#logs-panel .card-content").append("<div class='log-item'>\
@@ -1125,7 +1136,7 @@ var mapView = {
             Materialize.toast(log_object.message, 3000);
         }
     },
-    getGymLevel: function (gymPoints) {
+    getGymLevel: function(gymPoints) {
         var self = mapView;
         var level = 1;
         for (var myLevel in self.minimumPointsForLevel) {
@@ -1139,9 +1150,9 @@ var mapView = {
 };
 
 if (!String.prototype.format) {
-    String.prototype.format = function () {
+    String.prototype.format = function() {
         var args = arguments;
-        return this.replace(/{(\d+)}/g, function (match, number) {
+        return this.replace(/{(\d+)}/g, function(match, number) {
             return typeof args[number] != 'undefined' ? args[number] : match;
         });
     };
