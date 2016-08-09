@@ -4,7 +4,7 @@ var socket_io = {};
 var pokemonActions;
 
 
-$(document).ready(function() {
+$(document).ready(function() {    
     mapView.init();
 });
 
@@ -107,18 +107,27 @@ var mapView = {
         self.bindUi();
 
         $.getScript('https://maps.googleapis.com/maps/api/js?key={0}&libraries=drawing'.format(self.settings.gMapsAPIKey), function() {
+
             self.log({
                 message: 'Loading Data..'
             });
+
             self.loadJSON('data/pokemondata.json', function(data, successData) {
                 self.pokemonArray = data;
             }, self.errorFunc, 'pokemonData');
+
+            self.loadJSON('data/pokemonmove.json', function(data, successData) {
+                self.pokemonMoveArray = data;
+            }, self.errorFunc, 'pokemonData');
+
             self.loadJSON('data/pokemoncandy.json', function(data, successData) {
                 self.pokemoncandyArray = data;
             }, self.errorFunc, 'pokemonCandy');
+
             self.loadJSON('data/levelXp.json', function(data, successData) {
                 self.levelXpArray = data;
             }, self.errorFunc, 'levelXp');
+
             for (var i = 0; i < self.settings.users.length; i++) {
                 var user = self.settings.users[i].username;
                 self.user_data[user] = {
@@ -127,8 +136,8 @@ var mapView = {
                 };
                 self.settings.users[i] = self.settings.users[i].username;
                 self.pathcoords[user] = [];
-                self.initSocket()
             }
+            self.initSocket()
 
             setTimeout(self.initMap.bind(self), 2000);
             self.log({
@@ -141,7 +150,9 @@ var mapView = {
         var self = this;
         for (var i = 0; i < self.settings.users.length; i++) {
             var username = self.settings.users[i];
-            var userSocket = io.connect('http://' + document.domain + ':'+self.user_data[username].port);
+            var userSocket = io.connect('http://' + document.domain + ':'+self.user_data[username].port, {
+                transports: ['websocket']
+            });
 
             var onevent = userSocket.onevent;
             userSocket.onevent = function(packet) {
@@ -727,7 +738,11 @@ var mapView = {
                 pkmIV = ((pkmIVA + pkmIVD + pkmIVS) / 45.0).toFixed(2),
                 pkmHeight = pokemonData.height_m || 0,
                 pkmWeight = pokemonData.weight_kg || 0,
-                pkmTime = pokemonData.creation_time_ms || 0;
+                pkmTime = pokemonData.creation_time_ms || 0,
+                pkmMove1 = self.pokemonMoveArray[pokemonData.move_1],
+                pkmMove2 = self.pokemonMoveArray[pokemonData.move_2],
+                pkmAttk1 = self.pokemonArray[pkmID - 1].FastAttack,
+                pkmAttk2 = self.pokemonArray[pkmID - 1].ChargeAttack;
 
             sortedPokemon.push({
                 "name": pkmnName,
@@ -743,7 +758,10 @@ var mapView = {
                 "creation_time": pkmTime,
                 'candy': self.getCandy(pkmID, user_id),
                 "height": pkmHeight,
-                "weight": pkmWeight
+                "weight": pkmWeight,
+                "move1": pkmMove1,
+                "move2": pkmMove2,
+                "stats": "<i>"+pkmAttk1.join("<br>") +"</i><br><b><br>"+pkmAttk2.join("<br>")+"</b>" 
             });
         }
         switch (sortOn) {
@@ -816,10 +834,12 @@ var mapView = {
                 pkmnHeight = sortedPokemon[i].height,
                 pkmnWeight = sortedPokemon[i].weight,
                 pkmnCreateTime = sortedPokemon[i].creation_time,
-                candyNum = self.getCandy(pkmnNum, user_id);
-
+                pkmnMove1 = sortedPokemon[i].move1,
+                pkmnMove2 = sortedPokemon[i].move2,
+                candyNum = self.getCandy(pkmnNum, user_id),
+                pkmnAttk = sortedPokemon[i].stats;
             out += '<div class="col s12 m6 l3 center"><img src="image/pokemon/' +
-                pkmnImage + '" class="png_img"><br><b>' +
+                pkmnImage + '" class="png_img tooltipped" data-html="true" data-position="bottom" data-delay="50" data-tooltip="'+pkmnAttk+'"><br><b>' +
                 pkmnName +
                 '</b><br><div class="progress pkmn-progress pkmn-' + pkmnNum + '"> <div class="determinate pkmn-' + pkmnNum + '" style="width: ' + (pkmnHP / pkmnMHP) * 100 + '%"></div> </div>' +
                 '<b>HP:</b> ' + pkmnHP + ' / ' + pkmnMHP +
@@ -827,35 +847,35 @@ var mapView = {
                 '<br><b>IV:</b> ' + (pkmnIV >= 0.8 ? '<span style="color: #039be5">' + pkmnIV + '</span>' : pkmnIV) +
                 '<br><b>A/D/S:</b> ' + pkmnIVA + '/' + pkmnIVD + '/' + pkmnIVS +
                 '<br><b>Candy: </b>' + candyNum +
-                '</b><button class="chip btn-transfer-pokemon" data-pokemonId="' + pkmnUnique + '" data-pkmnName="' + pkmnName + '" data-pkmnCP="' + pkmnCP + '"' +
+                '<br><a class="tooltipped chip btn-transfer-pokemon" data-pokemonId="' + pkmnUnique + '" data-pkmnName="' + pkmnName + '" data-pkmnCP="' + pkmnCP + '"' +
                 'data-pkmnIV="' + pkmnIV + '"+ data-account="' + self.settings.users[user_id] + '" data-height="' + pkmnHeight + '" data-weight="' + pkmnWeight + '" data-creation_time_ms="' +
-                pkmnCreateTime + '">transfer</button> ';
+                pkmnCreateTime + '" data-html="true" data-position="bottom" data-delay="50" data-tooltip="'+pkmnMove1.name+":"+pkmnMove1.dps+"<br>"+pkmnMove2.name+":"+pkmnMove2.dps+'">transfer</a> ';
 
-            if (Object.keys(pokemonActions).length) {
-                var actionsOut = ''
-                for (var pa in pokemonActions) {
-                    var content = pokemonActions[pa].button(sortedPokemon[i], user_id);
-                    if (content) {
-                        actionsOut += '<li>' + pokemonActions[pa].button(sortedPokemon[i], user_id) + '</li>';
-                    }
-                }
+            // if (Object.keys(pokemonActions).length) {
+            //     var actionsOut = ''
+            //     for (var pa in pokemonActions) {
+            //         var content = pokemonActions[pa].button(sortedPokemon[i], user_id);
+            //         if (content) {
+            //             actionsOut += '<li>' + pokemonActions[pa].button(sortedPokemon[i], user_id) + '</li>';
+            //         }
+            //     }
 
-                if (actionsOut) {
-                    out +=
-                        '<div>' +
-                        '  <a class="dropdown-button btn"  href="#" data-activates="poke-actions-' + pkmnUnique + '">' +
-                        '    Actions' +
-                        '  </a>' +
-                        '  <ul id="poke-actions-' + pkmnUnique + '" class="dropdown-content">' +
-                        actionsOut +
-                        '  </ul>' +
-                        '</div><br>';
-                } else {
-                    out += '<div>' +
-                        '  <a class="dropdown-button btn disabled" href="#">Actions</a>' +
-                        '</div><br>';
-                }
-            }
+            //     if (actionsOut) {
+            //         out +=
+            //             '<div>' +
+            //             '  <a class="dropdown-button btn"  href="#" data-activates="poke-actions-' + pkmnUnique + '">' +
+            //             '    Actions' +
+            //             '  </a>' +
+            //             '  <ul id="poke-actions-' + pkmnUnique + '" class="dropdown-content">' +
+            //             actionsOut +
+            //             '  </ul>' +
+            //             '</div><br>';
+            //     } else {
+            //         out += '<div>' +
+            //             '  <a class="dropdown-button btn disabled" href="#">Actions</a>' +
+            //             '</div><br>';
+            //     }
+            // }
 
             out += '</div>';
         }
@@ -886,6 +906,12 @@ var mapView = {
             return (nth % 4 === 0) ? '</div></div><div class="row"><div' : match;
         });
         $('#subcontent').html(out);
+        $('.tooltipped').tooltip({delay: 50});
+        $('.tooltipped').each(function(index, element) {
+            var span = $('#' + $(element).attr('data-tooltip-id') + '>span:first-child');
+            span.before($(element).attr('data-tooltip'));
+            span.remove();
+        });
         $('.dropdown-button').dropdown();
     },
     sortAndShowPokedex: function(sortOn, user_id) {
