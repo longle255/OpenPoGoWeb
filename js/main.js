@@ -179,14 +179,12 @@ var mapView = {
                         if (data.result) {
                             swal("Success!", "discard success");
                             mapView.addInventory();
-                            $("#submenu").hide();
                         }
                         break
                     case 'transfer_pokemon':
                         if (data.result) {
                             swal("Deleted!", "Pokemon transfered.", "success");
                             mapView.addInventory();
-                            $("#submenu").hide();
                         }
                     default:
                         break;
