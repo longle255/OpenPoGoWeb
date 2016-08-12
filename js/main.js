@@ -425,6 +425,39 @@ var mapView = {
                 });
             });
         });
+
+        $(document).on('click', '.btn-envolve-pokemon', function() {
+            var pokemonId = $(this).data('pokemonid');
+            var pkmnName = $(this).data('pkmnname');
+            var pkmnCP = $(this).data('pkmncp');
+            var pkmnIV = $(this).data('pkmniv');
+            var account = $(this).data('account');
+            var height = $(this).data('height');
+            var weight = $(this).data('weight');
+            var creation_time_ms = $(this).data('creation_time_ms');
+            swal({
+                title: "Are you sure?",
+                text: "You will not be able to go back!",
+                type: "warning",
+                showCancelButton: true,
+                confirmButtonText: "Yes, envolve it!",
+                closeOnConfirm: false
+            }, function() {
+                socket_io[account].emit('remote:send_request', {
+                    account: account,
+                    name: 'envolve_pokemon',
+                    args: {
+                        pokemon_id: pokemonId,
+                        pokemon_name: pkmnName,
+                        cp: pkmnCP,
+                        iv: pkmnIV,
+                        height: height,
+                        weight: weight,
+                        creation_time_ms: creation_time_ms
+                    }
+                });
+            });
+        });
         switch (menu) {
             case 1:
                 var current_user_stats = self.user_data[self.settings.users[user_id]].stats[0].inventory_item_data.player_stats;
@@ -739,9 +772,24 @@ var mapView = {
                 pkmTime = pokemonData.creation_time_ms || 0,
                 pkmMove1 = self.pokemonMoveArray[pokemonData.move_1],
                 pkmMove2 = self.pokemonMoveArray[pokemonData.move_2],
-                pkmAttk1 = self.pokemonArray[pkmID - 1].FastAttack,
-                pkmAttk2 = self.pokemonArray[pkmID - 1].ChargeAttack;
+                pkmAttk1 = jQuery.extend([], self.pokemonArray[pkmID - 1].FastAttack),
+                pkmAttk2 = jQuery.extend([], self.pokemonArray[pkmID - 1].ChargeAttack);
 
+            var tmp = pkmMove1.name;
+            var fast = false;
+            if (tmp.indexOf(' Fast')>-1) {
+                tmp = tmp.substr(0, tmp.indexOf(' Fast'));
+                fast = true
+            }
+            for (var k in pkmAttk1){
+                if (pkmAttk1[k].indexOf(tmp)>-1) pkmAttk1[k] = "<span style='color: red;'>"+pkmAttk1[k]+(fast?" - Fast":"")+"</span>";
+                fast=false;
+            }
+            tmp = pkmMove2.name;
+            if (tmp.indexOf(' Fast')>-1) tmp = tmp.substr(0, tmp.indexOf(' Fast'));
+            for (var k in pkmAttk2){
+                if (pkmAttk2[k].indexOf(tmp)>-1) pkmAttk2[k] = "<span style='color: red;'>"+pkmAttk2[k]+"</span>";
+            }
             sortedPokemon.push({
                 "name": pkmnName,
                 "id": pkmID,
@@ -759,7 +807,7 @@ var mapView = {
                 "weight": pkmWeight,
                 "move1": pkmMove1,
                 "move2": pkmMove2,
-                "stats": "<i>"+pkmAttk1.join("<br>") +"</i><br><b><br>"+pkmAttk2.join("<br>")+"</b>" 
+                "stats": "<i>"+pkmAttk1.join("<br>") +"</i><b><br>"+pkmAttk2.join("<br>")+"</b>" 
             });
         }
         switch (sortOn) {
@@ -844,36 +892,16 @@ var mapView = {
                 '<br><b>CP:</b>' + pkmnCP +
                 '<br><b>IV:</b> ' + (pkmnIV >= 0.8 ? '<span style="color: #039be5">' + pkmnIV + '</span>' : pkmnIV) +
                 '<br><b>A/D/S:</b> ' + pkmnIVA + '/' + pkmnIVD + '/' + pkmnIVS +
-                '<br><b>Candy: </b>' + candyNum +
-                '<br><a class="tooltipped chip btn-transfer-pokemon" data-pokemonId="' + pkmnUnique + '" data-pkmnName="' + pkmnName + '" data-pkmnCP="' + pkmnCP + '"' +
+                '<br><b>Candy: </b>' + candyNum + '<br>' +
+                '<a href="#" class="chip btn-transfer-pokemon" data-pokemonId="' + pkmnUnique + '" data-pkmnName="' + pkmnName + '" data-pkmnCP="' + pkmnCP + '"' +
                 'data-pkmnIV="' + pkmnIV + '"+ data-account="' + self.settings.users[user_id] + '" data-height="' + pkmnHeight + '" data-weight="' + pkmnWeight + '" data-creation_time_ms="' +
-                pkmnCreateTime + '" data-html="true" data-position="bottom" data-delay="50" data-tooltip="'+pkmnMove1.name+":"+pkmnMove1.dps+"<br>"+pkmnMove2.name+":"+pkmnMove2.dps+'">transfer</a> ';
-
-            // if (Object.keys(pokemonActions).length) {
-            //     var actionsOut = ''
-            //     for (var pa in pokemonActions) {
-            //         var content = pokemonActions[pa].button(sortedPokemon[i], user_id);
-            //         if (content) {
-            //             actionsOut += '<li>' + pokemonActions[pa].button(sortedPokemon[i], user_id) + '</li>';
-            //         }
-            //     }
-
-            //     if (actionsOut) {
-            //         out +=
-            //             '<div>' +
-            //             '  <a class="dropdown-button btn"  href="#" data-activates="poke-actions-' + pkmnUnique + '">' +
-            //             '    Actions' +
-            //             '  </a>' +
-            //             '  <ul id="poke-actions-' + pkmnUnique + '" class="dropdown-content">' +
-            //             actionsOut +
-            //             '  </ul>' +
-            //             '</div><br>';
-            //     } else {
-            //         out += '<div>' +
-            //             '  <a class="dropdown-button btn disabled" href="#">Actions</a>' +
-            //             '</div><br>';
-            //     }
-            // }
+                pkmnCreateTime + '" title="Transfer">x</a> '+                
+                '<a href="#" class="chip btn-powerup-pokemon" data-pokemonId="' + pkmnUnique + '" data-pkmnName="' + pkmnName + '" data-pkmnCP="' + pkmnCP + '"' +
+                'data-pkmnIV="' + pkmnIV + '"+ data-account="' + self.settings.users[user_id] + '" data-height="' + pkmnHeight + '" data-weight="' + pkmnWeight + '" data-creation_time_ms="' +
+                pkmnCreateTime + '" title="Power Up">↑</a> '+
+                '<a href="#" class="chip btn-envolve-pokemon" data-pokemonId="' + pkmnUnique + '" data-pkmnName="' + pkmnName + '" data-pkmnCP="' + pkmnCP + '"' +
+                'data-pkmnIV="' + pkmnIV + '"+ data-account="' + self.settings.users[user_id] + '" data-height="' + pkmnHeight + '" data-weight="' + pkmnWeight + '" data-creation_time_ms="' +
+                pkmnCreateTime + '" title="Envolve">⇈</a> ';
 
             out += '</div>';
         }
